@@ -2,6 +2,13 @@ from flask import Flask, request, jsonify, render_template_string
 from urllib.parse import urlparse
 import re
 import ipaddress
+from datetime import datetime, timezone, timedelta
+import json
+import os
+import html as html_lib
+from urllib.request import Request, urlopen
+from urllib.parse import quote
+import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
 
@@ -543,6 +550,224 @@ def analisar_mensagem(mensagem):
     }
 
 
+
+# ==========================================================
+# IAFOX - RADAR DE GOLPES / NOTÍCIAS
+# ==========================================================
+
+ARQUIVO_NOTICIAS = "iafox_noticias.json"
+INTERVALO_ATUALIZACAO = timedelta(days=7)
+
+NOTICIAS_PADRAO = [
+    {
+        "titulo": "Como reconhecer tentativas de phishing",
+        "resumo": "Golpes podem usar mensagens urgentes, páginas falsas e pedidos de dados para enganar a vítima.",
+        "prevencao": "Não clique em links desconhecidos. Acesse o serviço diretamente pelo aplicativo ou site oficial.",
+        "fonte": "CERT.br",
+        "link": "https://cartilha.cert.br/fasciculos/",
+        "imagem": "",
+        "data": datetime.now().strftime("%d/%m/%Y")
+    }
+]
+
+
+def carregar_dados_noticias():
+    try:
+        if os.path.exists(ARQUIVO_NOTICIAS):
+            with open(ARQUIVO_NOTICIAS, "r", encoding="utf-8") as arquivo:
+                return json.load(arquivo)
+    except Exception:
+        pass
+
+    return {
+        "ultima_atualizacao": "",
+        "noticias": NOTICIAS_PADRAO
+    }
+
+
+def salvar_dados_noticias(dados):
+    try:
+        with open(ARQUIVO_NOTICIAS, "w", encoding="utf-8") as arquivo:
+            json.dump(dados, arquivo, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def buscar_imagem_artigo(url):
+    """Tenta encontrar a imagem principal publicada pelo próprio artigo."""
+    try:
+        req = Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 IAFOX-Security/1.0"}
+        )
+
+        with urlopen(req, timeout=8) as resposta:
+            pagina = resposta.read(300000).decode("utf-8", errors="ignore")
+
+        padroes = [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']'
+        ]
+
+        for padrao in padroes:
+            resultado = re.search(padrao, pagina, re.IGNORECASE)
+            if resultado:
+                return html_lib.unescape(resultado.group(1))
+
+    except Exception:
+        pass
+
+    return ""
+
+
+def extrair_texto(elemento, nome):
+    filho = elemento.find(nome)
+    if filho is not None and filho.text:
+        return filho.text.strip()
+
+    return ""
+
+
+def atualizar_noticias():
+    """
+    Busca notícias públicas sobre golpes/phishing.
+    A função é chamada no máximo uma vez a cada 7 dias.
+    """
+    consultas = [
+        "golpes internet phishing Brasil",
+        "golpe WhatsApp fraude Pix Brasil",
+        "cybersecurity scam Brazil"
+    ]
+
+    noticias = []
+
+    for consulta in consultas:
+        try:
+            url_rss = (
+                "https://news.google.com/rss/search?q="
+                + quote(consulta)
+                + "&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+            )
+
+            req = Request(
+                url_rss,
+                headers={"User-Agent": "Mozilla/5.0 IAFOX-Security/1.0"}
+            )
+
+            with urlopen(req, timeout=12) as resposta:
+                xml = resposta.read()
+
+            raiz = ET.fromstring(xml)
+
+            for item in raiz.findall("./channel/item")[:5]:
+                titulo = extrair_texto(item, "title")
+                link = extrair_texto(item, "link")
+                data_publicacao = extrair_texto(item, "pubDate")
+
+                fonte_elemento = item.find("source")
+                fonte = (
+                    fonte_elemento.text.strip()
+                    if fonte_elemento is not None and fonte_elemento.text
+                    else "Fonte pública"
+                )
+
+                if not titulo or not link:
+                    continue
+
+                imagem = buscar_imagem_artigo(link)
+
+                noticia = {
+                    "titulo": titulo,
+                    "resumo": (
+                        "Notícia recente encontrada pelo radar da IAFOX. "
+                        "Abra a fonte para conferir todos os detalhes."
+                    ),
+                    "prevencao": (
+                        "Não clique em links suspeitos, não forneça senhas "
+                        "ou códigos e confirme a informação diretamente "
+                        "no canal oficial da empresa."
+                    ),
+                    "fonte": fonte,
+                    "link": link,
+                    "imagem": imagem,
+                    "data": data_publicacao or datetime.now().strftime("%d/%m/%Y")
+                }
+
+                # Evita repetir a mesma notícia.
+                if not any(n["link"] == link for n in noticias):
+                    noticias.append(noticia)
+
+        except Exception as erro:
+            print("IAFOX - erro ao buscar notícias:", erro)
+
+    # Mantém as 10 notícias mais recentes encontradas.
+    noticias = noticias[:10]
+
+    if not noticias:
+        return None
+
+    agora = datetime.now(timezone.utc).isoformat()
+
+    dados = {
+        "ultima_atualizacao": agora,
+        "noticias": noticias
+    }
+
+    salvar_dados_noticias(dados)
+    return dados
+
+
+def noticias_precisam_atualizar(dados):
+    ultima = dados.get("ultima_atualizacao", "")
+
+    if not ultima:
+        return True
+
+    try:
+        data = datetime.fromisoformat(ultima)
+        if data.tzinfo is None:
+            data = data.replace(tzinfo=timezone.utc)
+
+        return datetime.now(timezone.utc) - data >= INTERVALO_ATUALIZACAO
+
+    except Exception:
+        return True
+
+
+DADOS_NOTICIAS = carregar_dados_noticias()
+
+
+def obter_noticias():
+    global DADOS_NOTICIAS
+
+    # Se passaram 7 dias, tenta buscar notícias novas.
+    if noticias_precisam_atualizar(DADOS_NOTICIAS):
+        novas = atualizar_noticias()
+
+        if novas:
+            DADOS_NOTICIAS = novas
+
+    return DADOS_NOTICIAS
+
+
+@app.route("/noticias", methods=["GET"])
+def noticias_api():
+    dados = obter_noticias()
+
+    return jsonify(dados)
+
+
+@app.route("/atualizar-noticias", methods=["POST"])
+def atualizar_noticias_api():
+    global DADOS_NOTICIAS
+
+    novas = atualizar_noticias()
+
+    if novas:
+        DADOS_NOTICIAS = novas
+
+    return jsonify(DADOS_NOTICIAS)
+
 # ==========================================================
 # API
 # ==========================================================
@@ -840,6 +1065,92 @@ footer {
     color: #ff7900;
 }
 
+
+/* ==========================================================
+   ABAS E NOTÍCIAS
+   ========================================================== */
+
+.tabs {
+    position: fixed;
+    left: 50%;
+    bottom: 15px;
+    transform: translateX(-50%);
+    width: min(900px, 94%);
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    background: rgba(15,15,15,.97);
+    border: 1px solid #333;
+    border-radius: 16px;
+    box-shadow: 0 0 25px rgba(255,100,0,.15);
+    z-index: 1000;
+}
+
+.tab-button {
+    margin: 0;
+    width: 50%;
+    background: #151515;
+    color: #aaa;
+    border: 1px solid #333;
+}
+
+.tab-button.active {
+    background: #ff7900;
+    color: #000;
+}
+
+.pagina {
+    display: none;
+}
+
+.pagina.active {
+    display: block;
+}
+
+.noticia {
+    overflow: hidden;
+    background: #151515;
+    border: 1px solid #333;
+    border-left: 4px solid #ff7900;
+    border-radius: 14px;
+    margin-top: 15px;
+}
+
+.noticia-imagem {
+    width: 100%;
+    height: 190px;
+    object-fit: cover;
+    display: block;
+    background: #0b0b0b;
+}
+
+.noticia-conteudo {
+    padding: 18px;
+}
+
+.noticia h3 {
+    margin-top: 0;
+    color: #ff7900;
+}
+
+.noticia .data {
+    color: #777;
+    font-size: 12px;
+    margin-top: 12px;
+}
+
+.noticia a {
+    display: inline-block;
+    margin-top: 12px;
+    color: #ff941f;
+    font-weight: bold;
+    text-decoration: none;
+}
+
+.rodape-espaco {
+    height: 95px;
+}
+
 </style>
 
 </head>
@@ -862,6 +1173,7 @@ Inteligência Artificial de Proteção Digital
 </header>
 
 
+<div id="pagina-analisar" class="pagina active">
 <!-- =====================================================
      ANALISADOR DE LINKS
 ===================================================== -->
@@ -953,6 +1265,38 @@ IAFOX analisando mensagem...
 
 </div>
 
+
+
+</div>
+
+<div id="pagina-noticias" class="pagina">
+    <div class="card">
+        <h2>📰 Golpes da Semana</h2>
+        <p>
+            O radar da IAFOX procura notícias públicas sobre golpes e phishing.
+        </p>
+
+        <div id="statusNoticias" class="loading">
+            🦊 IAFOX carregando o radar...
+        </div>
+
+        <div id="listaNoticias"></div>
+    </div>
+</div>
+
+<div class="rodape-espaco"></div>
+
+<div class="tabs">
+    <button class="tab-button active" id="tabAnalisar"
+            onclick="mostrarPagina('analisar')">
+        🔍 Analisar
+    </button>
+
+    <button class="tab-button" id="tabNoticias"
+            onclick="mostrarPagina('noticias')">
+        📰 Golpes
+    </button>
+</div>
 
 <footer>
 
@@ -1177,6 +1521,103 @@ async function analisarMensagem() {
 
 }
 
+
+// ======================================================
+// NAVEGAÇÃO DAS ABAS
+// ======================================================
+
+function mostrarPagina(pagina) {
+    document.getElementById("pagina-analisar").classList.remove("active");
+    document.getElementById("pagina-noticias").classList.remove("active");
+
+    document.getElementById("tabAnalisar").classList.remove("active");
+    document.getElementById("tabNoticias").classList.remove("active");
+
+    if (pagina === "noticias") {
+        document.getElementById("pagina-noticias").classList.add("active");
+        document.getElementById("tabNoticias").classList.add("active");
+        carregarNoticias();
+    } else {
+        document.getElementById("pagina-analisar").classList.add("active");
+        document.getElementById("tabAnalisar").classList.add("active");
+    }
+}
+
+
+// ======================================================
+// RADAR DE NOTÍCIAS
+// ======================================================
+
+async function carregarNoticias() {
+    const lista = document.getElementById("listaNoticias");
+    const status = document.getElementById("statusNoticias");
+
+    status.style.display = "block";
+
+    try {
+        const resposta = await fetch("/noticias");
+        const dados = await resposta.json();
+
+        let html = "";
+
+        if (!dados.noticias || dados.noticias.length === 0) {
+            html = `
+                <div class="danger">
+                    🚨 Ainda não foi possível encontrar notícias.
+                </div>
+            `;
+        }
+
+        (dados.noticias || []).forEach(function(noticia) {
+
+            const imagem = noticia.imagem
+                ? `<img class="noticia-imagem"
+                        src="${noticia.imagem}"
+                        alt="Imagem ilustrativa da notícia">`
+                : "";
+
+            html += `
+                <article class="noticia">
+                    ${imagem}
+
+                    <div class="noticia-conteudo">
+                        <h3>🚨 ${noticia.titulo}</h3>
+
+                        <p>${noticia.resumo}</p>
+
+                        <p>
+                            <strong>🛡️ Como evitar:</strong><br>
+                            ${noticia.prevencao}
+                        </p>
+
+                        <div class="data">
+                            📅 ${noticia.data}
+                            · 📰 ${noticia.fonte}
+                        </div>
+
+                        <a href="${noticia.link}"
+                           target="_blank"
+                           rel="noopener noreferrer">
+                            🔗 Ler fonte original
+                        </a>
+                    </div>
+                </article>
+            `;
+        });
+
+        lista.innerHTML = html;
+
+    } catch (erro) {
+        lista.innerHTML = `
+            <div class="danger">
+                🚨 Não foi possível carregar o radar de notícias.
+            </div>
+        `;
+    }
+
+    status.style.display = "none";
+}
+
 </script>
 
 </body>
@@ -1212,6 +1653,8 @@ if __name__ == "__main__":
     print("Para abrir no celular:")
     print("http://SEU_IP:5000")
     print("")
+    print("======================================")
+    print("📰 Radar de golpes: atualização automática a cada 7 dias")
     print("======================================")
 
     app.run(
