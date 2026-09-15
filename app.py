@@ -1481,6 +1481,11 @@ IAFOX analisando mensagem...
             onclick="mostrarPagina('noticias')">
         📰 Golpes
     </button>
+
+    <button class="tab-button" id="tabUpdates"
+            onclick="mostrarPagina('updates')">
+        🚀 Updates
+    </button>
 </div>
 
 <footer>
@@ -1494,7 +1499,7 @@ Sistema experimental de análise de segurança.
 
 
 
-<div id="pagina-updates" class="pagina" style="display:none;">
+<div id="pagina-updates" class="pagina">
     <div class="card">
         <div class="card-title">🚀 Updates da IAFOX</div>
         <p style="opacity:.8;">Histórico das principais evoluções da IAFOX Security.</p>
@@ -1761,14 +1766,19 @@ async function analisarMensagem() {
 function mostrarPagina(pagina) {
     document.getElementById("pagina-analisar").classList.remove("active");
     document.getElementById("pagina-noticias").classList.remove("active");
+    document.getElementById("pagina-updates").classList.remove("active");
 
     document.getElementById("tabAnalisar").classList.remove("active");
     document.getElementById("tabNoticias").classList.remove("active");
+    document.getElementById("tabUpdates").classList.remove("active");
 
     if (pagina === "noticias") {
         document.getElementById("pagina-noticias").classList.add("active");
         document.getElementById("tabNoticias").classList.add("active");
         carregarNoticias();
+    } else if (pagina === "updates") {
+        document.getElementById("pagina-updates").classList.add("active");
+        document.getElementById("tabUpdates").classList.add("active");
     } else {
         document.getElementById("pagina-analisar").classList.add("active");
         document.getElementById("tabAnalisar").classList.add("active");
