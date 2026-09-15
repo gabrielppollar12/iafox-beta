@@ -42,22 +42,29 @@ def calcular_nivel(pontos):
 
 
 def analisar_link(link):
+    """
+    Motor de análise de links da IAFOX.
+
+    Importante:
+    - Ter uma página de login NÃO significa que o site seja golpe.
+    - A IAFOX procura principalmente falsificação de marcas, domínio enganoso,
+      obfuscação e combinações de sinais.
+    - A análise é heurística e não substitui uma base de reputação em tempo real.
+    """
 
     pontos = 0
     motivos = []
+    alertas = set()
 
     link = link.strip()
 
     if not link:
         return {
             "nivel": 0,
+            "pontos": 0,
             "status": "SEM LINK",
             "motivos": ["Digite um link para analisar."]
         }
-
-    # ------------------------------------------------------
-    # Adiciona protocolo caso o usuário não coloque
-    # ------------------------------------------------------
 
     url_original = link
 
@@ -69,6 +76,7 @@ def analisar_link(link):
     except Exception:
         return {
             "nivel": 5,
+            "pontos": 100,
             "status": "PERIGOSO",
             "motivos": ["Não foi possível interpretar esse link."]
         }
@@ -78,248 +86,425 @@ def analisar_link(link):
     if not dominio:
         return {
             "nivel": 5,
+            "pontos": 100,
             "status": "PERIGOSO",
             "motivos": ["O endereço não possui um domínio válido."]
         }
 
-    dominio = dominio.lower()
+    dominio = dominio.lower().rstrip(".")
+    url_lower = url_original.lower()
 
-    # ------------------------------------------------------
-    # HTTPS
-    # ------------------------------------------------------
+    def adicionar(pontos_add, motivo):
+        nonlocal pontos
+        pontos += pontos_add
+        if motivo not in alertas:
+            motivos.append(motivo)
+            alertas.add(motivo)
+
+    # ======================================================
+    # 1. SINAIS TÉCNICOS
+    # ======================================================
 
     if parsed.scheme.lower() != "https":
-        pontos += 15
-        motivos.append("O site não utiliza HTTPS.")
-
-    # ------------------------------------------------------
-    # IP diretamente no link
-    # ------------------------------------------------------
+        adicionar(15, "O site não utiliza HTTPS.")
 
     try:
         ipaddress.ip_address(dominio)
-
-        pontos += 35
-        motivos.append(
-            "O endereço usa um IP diretamente em vez de um domínio."
-        )
-
+        adicionar(35, "O endereço usa um IP diretamente em vez de um domínio.")
     except ValueError:
         pass
 
-    # ------------------------------------------------------
-    # Punycode / caracteres internacionais
-    # ------------------------------------------------------
+    if parsed.username or parsed.password or "@" in parsed.netloc:
+        adicionar(
+            35,
+            "A URL contém '@' ou informações antes do domínio, recurso que pode ser usado para esconder o verdadeiro destino."
+        )
+
+    try:
+        porta = parsed.port
+        if porta and porta not in (80, 443):
+            adicionar(15, f"O endereço utiliza uma porta incomum ({porta}).")
+    except ValueError:
+        adicionar(25, "A URL possui uma porta inválida ou malformada.")
 
     if "xn--" in dominio:
-        pontos += 30
-        motivos.append(
-            "O domínio utiliza Punycode, algo que pode ser usado em golpes de falsificação."
+        adicionar(
+            30,
+            "O domínio utiliza Punycode, que pode ser usado em falsificações de aparência."
         )
 
-    # ------------------------------------------------------
-    # Encurtadores
-    # ------------------------------------------------------
+    if any(ord(c) > 127 for c in dominio):
+        adicionar(
+            25,
+            "O domínio contém caracteres internacionais; isso merece atenção em links que imitam marcas conhecidas."
+        )
 
-    encurtadores = [
-        "bit.ly",
-        "tinyurl.com",
-        "t.co",
-        "goo.gl",
-        "ow.ly",
-        "is.gd",
-        "buff.ly",
-        "cutt.ly",
-        "shorturl.at"
-    ]
+    encurtadores = {
+        "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly",
+        "is.gd", "buff.ly", "cutt.ly", "shorturl.at",
+        "rebrand.ly", "s.id", "tiny.cc"
+    }
 
     if dominio in encurtadores:
-        pontos += 20
-        motivos.append(
-            "O link utiliza um serviço de encurtamento."
+        adicionar(
+            20,
+            "O link utiliza um serviço de encurtamento e o destino real fica oculto."
         )
 
-    # ------------------------------------------------------
-    # Palavras suspeitas no domínio
-    # ------------------------------------------------------
+    hospedagens_compartilhadas = {
+        "pages.dev", "github.io", "netlify.app", "vercel.app",
+        "web.app", "firebaseapp.com", "blogspot.com",
+        "weebly.com", "wixsite.com", "000webhostapp.com"
+    }
+
+    if any(dominio == base or dominio.endswith("." + base)
+           for base in hospedagens_compartilhadas):
+        adicionar(
+            8,
+            "O site está em uma plataforma de hospedagem compartilhada; isso não prova golpe, mas o domínio sozinho não confirma a identidade da empresa."
+        )
+
+    # ======================================================
+    # 2. DOMÍNIOS OFICIAIS + DETECÇÃO DE FALSIFICAÇÃO
+    # ======================================================
+
+    marcas = {
+        "nubank": {"nubank.com.br"},
+        "itau": {"itau.com.br", "itau.com"},
+        "bradesco": {"bradesco.com.br"},
+        "caixa": {"caixa.gov.br"},
+        "mercadolivre": {"mercadolivre.com.br"},
+        "mercadolivre": {"mercadolivre.com.br"},
+        "paypal": {"paypal.com", "paypal.com.br"},
+        "amazon": {"amazon.com.br", "amazon.com"},
+        "google": {"google.com", "google.com.br"},
+        "microsoft": {"microsoft.com"},
+        "apple": {"apple.com"},
+        "instagram": {"instagram.com"},
+        "facebook": {"facebook.com"},
+        "whatsapp": {"whatsapp.com"},
+        "gov": {"gov.br"},
+        "serasa": {"serasa.com.br"},
+        "correios": {"correios.com.br"},
+        "picpay": {"picpay.com"},
+        "inter": {"bancointer.com.br", "inter.co"},
+        "santander": {"santander.com.br"},
+        "bancodobrasil": {"bb.com.br"},
+        "pagseguro": {"pagseguro.uol.com.br", "pagbank.com.br"},
+        "stone": {"stone.com.br"},
+        "magalu": {"magazineluiza.com.br"},
+        "olx": {"olx.com.br"}
+    }
+
+    dominio_sem_www = dominio[4:] if dominio.startswith("www.") else dominio
+
+    def dominio_oficial(oficiais):
+        return any(
+            dominio_sem_www == oficial or
+            dominio_sem_www.endswith("." + oficial)
+            for oficial in oficiais
+        )
+
+    # Só considera a presença de "login" como contexto.
+    # NÃO aumenta o risco por si só.
+    palavras_login = {
+        "login", "log-in", "signin", "sign-in",
+        "entrar", "acesso", "minha-conta", "minhaconta"
+    }
+
+    contexto_login = any(
+        palavra in url_lower for palavra in palavras_login
+    )
+
+    # Detecção de marca no domínio/caminho.
+    # Login legítimo em domínio oficial permanece de baixo risco.
+    marcas_detectadas = []
+
+    for marca, oficiais in marcas.items():
+        marca_normalizada = re.sub(r"[^a-z0-9]", "", marca.lower())
+        dominio_normalizado = re.sub(r"[^a-z0-9]", "", dominio_sem_www)
+
+        if not marca_normalizada:
+            continue
+
+        oficial = dominio_oficial(oficiais)
+
+        if oficial:
+            continue
+
+        if marca_normalizada in dominio_normalizado:
+            marcas_detectadas.append(marca)
+            adicionar(
+                35,
+                f"O domínio parece usar o nome da marca '{marca}' sem estar em um domínio oficial conhecido."
+            )
+
+        # Marca no caminho é menos forte: pode ser uma página legítima
+        # que fala sobre a marca, então só soma se houver contexto de login/segurança.
+        caminho_query = (parsed.path + "?" + parsed.query).lower()
+        texto_normalizado = re.sub(r"[^a-z0-9]", "", caminho_query)
+
+        if marca_normalizada in texto_normalizado and contexto_login:
+            marcas_detectadas.append(marca)
+            adicionar(
+                20,
+                f"A URL menciona '{marca}' em uma área relacionada a acesso/login, mas o domínio não é oficial."
+            )
+
+    # ======================================================
+    # 3. TYPOSQUATTING / DOMÍNIO PARECIDO COM O OFICIAL
+    # ======================================================
+
+    def distancia_levenshtein(a, b):
+        if a == b:
+            return 0
+        if not a:
+            return len(b)
+        if not b:
+            return len(a)
+
+        anterior = list(range(len(b) + 1))
+
+        for i, ca in enumerate(a, 1):
+            atual = [i]
+            for j, cb in enumerate(b, 1):
+                custo = 0 if ca == cb else 1
+                atual.append(min(
+                    atual[-1] + 1,
+                    anterior[j] + 1,
+                    anterior[j - 1] + custo
+                ))
+            anterior = atual
+
+        return anterior[-1]
+
+    dominio_base_normalizado = re.sub(r"[^a-z0-9]", "", dominio_sem_www.split(".")[0])
+
+    for marca, oficiais in marcas.items():
+        for oficial in oficiais:
+            oficial_base = oficial.split(".")[0].lower()
+            oficial_normalizado = re.sub(r"[^a-z0-9]", "", oficial_base)
+
+            if not oficial_normalizado or not dominio_base_normalizado:
+                continue
+
+            # Evita marcar o domínio oficial como parecido.
+            if dominio_sem_www == oficial:
+                continue
+
+            distancia = distancia_levenshtein(
+                dominio_base_normalizado,
+                oficial_normalizado
+            )
+
+            # Pequenas alterações no nome de uma marca podem indicar
+            # typosquatting, principalmente quando há login.
+            limite = 1 if len(oficial_normalizado) <= 8 else 2
+
+            if (
+                distancia <= limite
+                and dominio_base_normalizado != oficial_normalizado
+            ):
+                adicionar(
+                    35 if contexto_login else 25,
+                    f"O nome do domínio é muito parecido com o domínio oficial de '{marca}', mas não é o mesmo."
+                )
+                break
+
+    # ======================================================
+    # 4. PALAVRAS SUSPEITAS
+    # ======================================================
 
     palavras_suspeitas = [
-        "login",
-        "verify",
-        "verification",
-        "secure",
-        "security",
-        "update",
-        "confirm",
-        "account",
-        "password",
-        "wallet",
-        "bonus",
-        "premio",
-        "premios",
-        "pix",
-        "banco",
-        "bank",
-        "support",
-        "suporte",
-        "cliente",
-        "seguro",
-        "urgente",
-        "ganhe",
-        "ganhar",
-        "free",
-        "gift",
-        "reward"
+        "login", "log-in", "signin", "sign-in",
+        "verify", "verification", "verificacao", "verificação",
+        "secure", "security", "seguranca", "segurança",
+        "update", "confirm", "confirmation",
+        "account", "conta", "password", "senha",
+        "wallet", "bonus", "premio", "prêmios", "premios",
+        "pix", "banco", "bank", "support", "suporte",
+        "cliente", "urgente", "ganhe", "ganhar",
+        "free", "gift", "reward", "bloqueado", "bloqueada"
     ]
 
-    encontradas = []
+    encontradas = sorted({
+        palavra for palavra in palavras_suspeitas
+        if palavra in dominio
+    })
 
-    for palavra in palavras_suspeitas:
-        if palavra in dominio:
-            encontradas.append(palavra)
+    # Login/segurança sozinhos NÃO geram pontuação.
+    # Eles viram sinal quando aparecem junto de outros indícios.
+    palavras_fortes = [
+        palavra for palavra in encontradas
+        if palavra not in {
+            "login", "log-in", "signin", "sign-in",
+            "secure", "security", "support", "suporte"
+        }
+    ]
 
-    if encontradas:
-        pontos += min(len(encontradas) * 8, 25)
-
-        motivos.append(
-            "O domínio contém termos frequentemente utilizados em páginas falsas: "
-            + ", ".join(encontradas)
+    if palavras_fortes:
+        adicionar(
+            min(len(palavras_fortes) * 7, 25),
+            "O domínio contém termos frequentemente usados em páginas falsas: "
+            + ", ".join(palavras_fortes)
         )
-
-    # ------------------------------------------------------
-    # Domínio muito grande
-    # ------------------------------------------------------
 
     if len(dominio) > 45:
-        pontos += 10
-        motivos.append(
-            "O domínio possui um tamanho incomum."
-        )
-
-    # ------------------------------------------------------
-    # Muitos subdomínios
-    # ------------------------------------------------------
+        adicionar(10, "O domínio possui um tamanho incomum.")
 
     partes = dominio.split(".")
-
     if len(partes) >= 5:
-        pontos += 20
-        motivos.append(
-            "O endereço possui muitos níveis de subdomínio."
+        adicionar(
+            20,
+            "O endereço possui muitos níveis de subdomínio, o que pode esconder a parte importante do domínio."
         )
-
-    # ------------------------------------------------------
-    # Muitos números
-    # ------------------------------------------------------
 
     quantidade_numeros = sum(c.isdigit() for c in dominio)
+    quantidade_hifens = dominio.count("-")
 
     if quantidade_numeros >= 5:
-        pontos += 10
-        motivos.append(
-            "O domínio possui uma quantidade incomum de números."
-        )
+        adicionar(10, "O domínio possui uma quantidade incomum de números.")
 
-    # ------------------------------------------------------
-    # Caracteres estranhos
-    # ------------------------------------------------------
+    if quantidade_hifens >= 3:
+        adicionar(
+            10,
+            "O domínio possui muitos hífens, padrão que pode aparecer em domínios de imitação."
+        )
 
     if "_" in dominio:
-        pontos += 15
-        motivos.append(
-            "O domínio contém caracteres incomuns."
-        )
-
-    # ------------------------------------------------------
-    # URLs muito grandes
-    # ------------------------------------------------------
+        adicionar(15, "O domínio contém caracteres incomuns.")
 
     if len(url_original) > 180:
-        pontos += 15
-        motivos.append(
-            "O link é muito longo e possui muitos caracteres."
+        adicionar(15, "O link é muito longo e possui muitos caracteres.")
+
+    # ======================================================
+    # 5. OBFUSCAÇÃO E PADRÕES DE PHISHING
+    # ======================================================
+
+    if re.search(r"%[0-9a-fA-F]{2}", url_original):
+        adicionar(
+            10,
+            "A URL contém caracteres codificados, o que pode dificultar a leitura do endereço real."
         )
 
-    # ------------------------------------------------------
-    # Palavras perigosas na URL inteira
-    # ------------------------------------------------------
-
-    url_lower = url_original.lower()
+    if re.search(r"(%2f|%5c|%40|%3a)", url_lower):
+        adicionar(
+            20,
+            "A URL contém codificações usadas para esconder separadores ou partes do endereço."
+        )
 
     termos_perigosos = [
-        "verify-account",
-        "verify-account-now",
-        "confirm-account",
-        "login-confirm",
-        "password-reset",
-        "free-money",
-        "free-prize",
-        "pix-gratis",
-        "premio-gratis",
-        "ganhe-dinheiro",
-        "cartao-bloqueado",
-        "conta-bloqueada"
+        "verify-account", "verify-account-now",
+        "confirm-account", "login-confirm",
+        "password-reset", "reset-password",
+        "free-money", "free-prize",
+        "pix-gratis", "pix-premio",
+        "premio-gratis", "ganhe-dinheiro",
+        "cartao-bloqueado", "conta-bloqueada",
+        "atualize-seus-dados", "confirmar-dados",
+        "regularizar-conta"
     ]
 
-    encontrados_url = []
-
-    for termo in termos_perigosos:
-        if termo in url_lower:
-            encontrados_url.append(termo)
+    encontrados_url = [
+        termo for termo in termos_perigosos
+        if termo in url_lower
+    ]
 
     if encontrados_url:
-        pontos += 30
-
-        motivos.append(
+        adicionar(
+            30,
             "A URL contém padrões comuns em campanhas de phishing/golpes."
         )
-
-    # ------------------------------------------------------
-    # Muitos parâmetros
-    # ------------------------------------------------------
 
     if parsed.query:
         quantidade_parametros = len(parsed.query.split("&"))
 
         if quantidade_parametros >= 6:
-            pontos += 10
-            motivos.append(
-                "O link possui muitos parâmetros."
+            adicionar(10, "O link possui muitos parâmetros.")
+
+        if re.search(
+            r"(senha|password|cpf|token|codigo|code|cartao|card)",
+            parsed.query,
+            re.IGNORECASE
+        ):
+            adicionar(
+                20,
+                "A URL possui parâmetros que parecem relacionados a credenciais ou dados pessoais."
             )
 
-    # ------------------------------------------------------
-    # Limita pontos
-    # ------------------------------------------------------
+    tlds_atencao = {
+        ".xyz", ".top", ".click", ".zip", ".mov",
+        ".work", ".cam", ".buzz", ".monster"
+    }
+
+    if any(dominio.endswith(tld) for tld in tlds_atencao):
+        adicionar(
+            8,
+            "O domínio utiliza uma extensão frequentemente encontrada em campanhas suspeitas; isso não significa, sozinho, que o site seja golpe."
+        )
+
+    # ======================================================
+    # 6. COMBINAÇÃO DE SINAIS
+    # ======================================================
+
+    sinais_falsificacao = 0
+
+    if contexto_login:
+        sinais_falsificacao += 1
+
+    if marcas_detectadas:
+        sinais_falsificacao += 2
+
+    if any(
+        palavra in dominio
+        for palavra in ("verify", "verificacao", "segur", "confirm", "account", "banco")
+    ):
+        sinais_falsificacao += 1
+
+    if quantidade_hifens >= 2:
+        sinais_falsificacao += 1
+
+    if parsed.path.count("/") >= 5:
+        sinais_falsificacao += 1
+
+    if parsed.query:
+        sinais_falsificacao += 1
+
+    if sinais_falsificacao >= 3:
+        adicionar(
+            15,
+            "A combinação de vários sinais aumenta a suspeita de uma página criada para enganar o usuário."
+        )
+
+    # ======================================================
+    # 7. RESULTADO
+    # ======================================================
 
     pontos = min(pontos, 100)
-
     nivel = calcular_nivel(pontos)
-
-    # ------------------------------------------------------
-    # Status
-    # ------------------------------------------------------
 
     if nivel == 0:
         status = "MUITO SEGURO"
-
     elif nivel == 1:
         status = "BAIXO RISCO"
-
     elif nivel == 2:
         status = "ATENÇÃO"
-
     elif nivel == 3:
         status = "RISCO MODERADO"
-
     elif nivel == 4:
         status = "ALTO RISCO"
-
     else:
         status = "PERIGOSO"
 
     if not motivos:
         motivos.append(
-            "Nenhum comportamento suspeito foi identificado pela análise básica."
+            "Nenhum comportamento suspeito foi identificado pela análise heurística."
+        )
+
+    # Mensagem contextual para sites legítimos de login.
+    if contexto_login and not marcas_detectadas and nivel <= 1:
+        motivos.append(
+            "A presença de login, sozinha, não indica golpe. O endereço não apresentou sinais fortes de falsificação na análise heurística."
         )
 
     return {
@@ -1308,6 +1493,36 @@ Sistema experimental de análise de segurança.
 </div>
 
 
+
+<div id="pagina-updates" class="pagina" style="display:none;">
+    <div class="card">
+        <div class="card-title">🚀 Updates da IAFOX</div>
+        <p style="opacity:.8;">Histórico das principais evoluções da IAFOX Security.</p>
+
+        <div style="display:flex;flex-direction:column;gap:14px;margin-top:18px;">
+
+            <div style="padding:18px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);">
+                <div style="font-size:20px;font-weight:800;">🦊 0.0.1</div>
+                <div style="margin-top:6px;font-weight:700;">Criação</div>
+                <div style="margin-top:5px;opacity:.75;">Nascimento da IAFOX Security e início do projeto.</div>
+            </div>
+
+            <div style="padding:18px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);">
+                <div style="font-size:20px;font-weight:800;">📰 0.0.2</div>
+                <div style="margin-top:6px;font-weight:700;">Adição de Golpes</div>
+                <div style="margin-top:5px;opacity:.75;">Nova área com informações e notícias sobre golpes e formas de prevenção.</div>
+            </div>
+
+            <div style="padding:18px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);">
+                <div style="font-size:20px;font-weight:800;">🔐 0.0.3</div>
+                <div style="margin-top:6px;font-weight:700;">Melhoria de Análises</div>
+                <div style="margin-top:5px;opacity:.75;">Fortalecimento da análise de links, incluindo sinais de falsificação e domínios suspeitos.</div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
 <script>
 
 
@@ -1317,93 +1532,110 @@ Sistema experimental de análise de segurança.
 
 async function analisarLink() {
 
-    const link = document.getElementById("link").value;
+    const link = document.getElementById("link").value.trim();
 
     if (!link) {
-
         alert("Digite um link primeiro.");
-
         return;
     }
 
-    document.getElementById("loadingLink").style.display = "block";
+    const loading = document.getElementById("loadingLink");
+    const resultado = document.getElementById("resultadoLink");
 
-    document.getElementById("resultadoLink").style.display = "none";
+    loading.style.display = "block";
+    resultado.style.display = "none";
 
+    try {
+        const resposta = await fetch("/analisar-link", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                link: link
+            })
+        });
 
-    const resposta = await fetch("/analisar-link", {
+        const dados = await resposta.json();
 
-        method: "POST",
+        loading.style.display = "none";
+        resultado.style.display = "block";
 
-        headers: {
-            "Content-Type": "application/json"
-        },
+        // Reinicia a animação do resultado.
+        resultado.classList.remove("scan-in");
+        void resultado.offsetWidth;
+        resultado.classList.add("scan-in");
 
-        body: JSON.stringify({
-            link: link
-        })
+        document.getElementById("nivelLink").innerText =
+            dados.nivel + "/5";
 
-    });
+        document.getElementById("statusLink").innerText =
+            dados.status;
 
+        let html = "";
 
-    const dados = await resposta.json();
+        dados.motivos.forEach(function(motivo) {
+            html += `
+                <div class="motivo">
+                    ⚠️ ${motivo}
+                </div>
+            `;
+        });
 
+        document.getElementById("motivosLink").innerHTML = html;
 
-    document.getElementById("loadingLink").style.display = "none";
+        if (dados.nivel <= 1) {
 
-    document.getElementById("resultadoLink").style.display = "block";
+            document.getElementById(
+                "mensagemSegurancaLink"
+            ).innerHTML = `
+                <div class="safe">
+                    🛡️ VOCÊ ESTÁ SEGURO COM A IAFOX
+                    <br><br>
+                    Nenhum sinal forte de perigo foi encontrado.
+                </div>
+            `;
 
+        } else if (dados.nivel >= 4) {
 
-    document.getElementById("nivelLink").innerText =
-        dados.nivel + "/5";
+            document.getElementById(
+                "mensagemSegurancaLink"
+            ).innerHTML = `
+                <div class="danger">
+                    🚨 IAFOX DETECTOU ALTO RISCO!
+                    <br><br>
+                    Não abra o site e não informe senhas, códigos ou dados pessoais.
+                </div>
+            `;
 
+        } else {
 
-    document.getElementById("statusLink").innerText =
-        dados.status;
+            document.getElementById(
+                "mensagemSegurancaLink"
+            ).innerHTML = `
+                <div class="danger">
+                    ⚠️ CUIDADO!
+                    <br><br>
+                    A IAFOX encontrou sinais que merecem atenção.
+                </div>
+            `;
+        }
 
+    } catch (erro) {
 
-    let html = "";
+        loading.style.display = "none";
+        resultado.style.display = "block";
 
-    dados.motivos.forEach(function(motivo) {
+        document.getElementById("nivelLink").innerText = "?/5";
+        document.getElementById("statusLink").innerText =
+            "ERRO NA ANÁLISE";
 
-        html += `
-        <div class="motivo">
-            ⚠️ ${motivo}
-        </div>
+        document.getElementById("motivosLink").innerHTML = `
+            <div class="motivo">
+                ⚠️ Não foi possível concluir a análise. Tente novamente.
+            </div>
         `;
-
-    });
-
-
-    document.getElementById("motivosLink").innerHTML = html;
-
-
-    if (dados.nivel <= 1) {
-
-        document.getElementById(
-            "mensagemSegurancaLink"
-        ).innerHTML = `
-        <div class="safe">
-            🛡️ VOCÊ ESTÁ SEGURO COM A IAFOX
-            <br><br>
-            Nenhum sinal forte de perigo foi encontrado.
-        </div>
-        `;
-
-    } else {
-
-        document.getElementById(
-            "mensagemSegurancaLink"
-        ).innerHTML = `
-        <div class="danger">
-            🚨 CUIDADO!
-            <br><br>
-            A IAFOX encontrou sinais que merecem atenção.
-        </div>
-        `;
-
     }
-
 }
 
 
@@ -1662,3 +1894,4 @@ if __name__ == "__main__":
         port=5000,
         debug=True
     )
+
