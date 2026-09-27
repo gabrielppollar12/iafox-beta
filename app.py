@@ -969,6 +969,54 @@ def analisar_link_api():
     return jsonify(resultado)
 
 
+@app.route("/protecao-status", methods=["GET"])
+def protecao_status():
+    return jsonify({
+        "status": "PROTECAO_ONLINE",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+
+@app.route("/proteger", methods=["POST"])
+def proteger():
+
+    dados = request.get_json() or {}
+
+    link = dados.get("link", "").strip()
+
+    if not link:
+        return jsonify({
+            "nivel": 0,
+            "status": "SEM LINK",
+            "alerta": "Digite um link para a IAFOX proteger você.",
+            "motivos": ["Nenhum link foi informado."]
+        })
+
+    resultado = analisar_link(link)
+
+    if resultado["nivel"] >= 4:
+        alerta = (
+            "🚨 A RAPOSA DETECTOU MOVIMENTOS AGRESSIVOS "
+            "DESSE SITE OU LINK."
+        )
+    elif resultado["nivel"] >= 2:
+        alerta = (
+            "⚠️ A IAFOX encontrou sinais que merecem atenção."
+        )
+    else:
+        alerta = (
+            "🛡️ A IAFOX não encontrou sinais fortes de perigo."
+        )
+
+    return jsonify({
+        "nivel": resultado["nivel"],
+        "status": resultado["status"],
+        "dominio": resultado.get("dominio", ""),
+        "motivos": resultado["motivos"],
+        "alerta": alerta
+    })
+
+
 @app.route("/analisar-mensagem", methods=["POST"])
 def analisar_mensagem_api():
 
@@ -1469,6 +1517,131 @@ IAFOX analisando mensagem...
     </div>
 </div>
 
+<div id="pagina-protecao" class="pagina">
+    <div class="card">
+        <div class="card-title">🛡️ MINHA PROTEÇÃO</div>
+
+        <p style="opacity:.8;">
+            O escudo da IAFOX foi separado da análise manual.
+            Quando ativado, ele fica em modo de proteção contínua.
+        </p>
+
+        <div style="margin-top:20px;padding:22px;border-radius:18px;
+                    background:rgba(255,100,0,.06);
+                    border:1px solid rgba(255,100,0,.35);">
+
+            <div style="text-align:center;">
+                <div id="escudoIcone" style="font-size:64px;">🛡️</div>
+
+                <div id="statusProtecao"
+                     style="margin-top:8px;font-size:22px;font-weight:900;">
+                    DESLIGADO
+                </div>
+
+                <div id="substatusProtecao"
+                     style="margin-top:7px;opacity:.7;">
+                    O escudo está aguardando ativação.
+                </div>
+
+                <button class="btn"
+                        type="button"
+                        onclick="alternarProtecao()"
+                        id="btnProtecao"
+                        style="margin-top:18px;">
+                    🛡️ ATIVAR MINHA PROTEÇÃO
+                </button>
+            </div>
+        </div>
+
+        <div id="painelProtecao" style="display:none;margin-top:18px;">
+
+            <div style="padding:18px;border-radius:16px;
+                        background:rgba(40,180,80,.08);
+                        border:1px solid rgba(80,220,100,.35);">
+
+                <div style="font-size:21px;font-weight:900;">
+                    🟢 ESCUDO ATIVO
+                </div>
+
+                <div id="monitorProtecao"
+                     style="margin-top:8px;opacity:.8;">
+                    🦊 IAFOX acompanhando o estado da proteção...
+                </div>
+
+                <div id="ultimaVerificacao"
+                     style="margin-top:6px;font-size:13px;opacity:.6;">
+                    Última verificação: aguardando...
+                </div>
+            </div>
+
+            <div style="margin-top:16px;display:grid;gap:12px;">
+
+                <div style="padding:16px;border-radius:14px;
+                            background:rgba(255,255,255,.04);
+                            border:1px solid rgba(255,255,255,.08);">
+                    <div style="font-weight:800;">🌐 Navegação</div>
+                    <div id="statusNavegacao"
+                         style="margin-top:5px;color:#8cff8c;">
+                        MONITORAMENTO PREPARADO
+                    </div>
+                </div>
+
+                <div style="padding:16px;border-radius:14px;
+                            background:rgba(255,255,255,.04);
+                            border:1px solid rgba(255,255,255,.08);">
+                    <div style="font-weight:800;">🦠 Ameaças</div>
+                    <div id="statusAmeacas"
+                         style="margin-top:5px;color:#8cff8c;">
+                        DETECÇÃO PRONTA
+                    </div>
+                </div>
+
+                <div style="padding:16px;border-radius:14px;
+                            background:rgba(255,255,255,.04);
+                            border:1px solid rgba(255,255,255,.08);">
+                    <div style="font-weight:800;">🚨 Alertas</div>
+                    <div id="statusAlertas"
+                         style="margin-top:5px;color:#8cff8c;">
+                        NENHUM ALERTA
+                    </div>
+                </div>
+
+                <div style="padding:16px;border-radius:14px;
+                            background:rgba(255,255,255,.04);
+                            border:1px solid rgba(255,255,255,.08);">
+                    <div style="font-weight:800;">🛡️ Estado do escudo</div>
+                    <div id="statusEscudo"
+                         style="margin-top:5px;color:#8cff8c;">
+                        PROTEÇÃO OPERACIONAL
+                    </div>
+                </div>
+            </div>
+
+            <div id="logProtecao"
+                 style="margin-top:16px;padding:16px;border-radius:14px;
+                        background:#0d0d0d;border:1px solid #292929;">
+                <div style="font-weight:800;color:#ff7900;">
+                    📡 Atividade da IAFOX
+                </div>
+                <div id="atividadeProtecao"
+                     style="margin-top:10px;font-size:13px;line-height:1.7;opacity:.8;">
+                    🦊 Escudo iniciado e aguardando eventos.
+                </div>
+            </div>
+
+            <div style="margin-top:16px;padding:14px;border-radius:12px;
+                        background:rgba(255,255,255,.03);
+                        opacity:.7;font-size:13px;">
+                Esta etapa cria o painel e o monitoramento contínuo da proteção.
+                Para acompanhar a navegação de outros sites/abas de verdade,
+                a próxima etapa será transformar o escudo em um componente do
+                navegador ou aplicativo, porque uma página Flask não pode
+                enxergar outras abas por segurança do navegador.
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="rodape-espaco"></div>
 
 <div class="tabs">
@@ -1485,6 +1658,11 @@ IAFOX analisando mensagem...
     <button class="tab-button" id="tabUpdates"
             onclick="mostrarPagina('updates')">
         🚀 Updates
+    </button>
+
+    <button class="tab-button" id="tabProtecao"
+            onclick="mostrarPagina('protecao')">
+        Minha Proteção
     </button>
 </div>
 
@@ -1767,10 +1945,12 @@ function mostrarPagina(pagina) {
     document.getElementById("pagina-analisar").classList.remove("active");
     document.getElementById("pagina-noticias").classList.remove("active");
     document.getElementById("pagina-updates").classList.remove("active");
+    document.getElementById("pagina-protecao").classList.remove("active");
 
     document.getElementById("tabAnalisar").classList.remove("active");
     document.getElementById("tabNoticias").classList.remove("active");
     document.getElementById("tabUpdates").classList.remove("active");
+    document.getElementById("tabProtecao").classList.remove("active");
 
     if (pagina === "noticias") {
         document.getElementById("pagina-noticias").classList.add("active");
@@ -1779,9 +1959,131 @@ function mostrarPagina(pagina) {
     } else if (pagina === "updates") {
         document.getElementById("pagina-updates").classList.add("active");
         document.getElementById("tabUpdates").classList.add("active");
+    } else if (pagina === "protecao") {
+        document.getElementById("pagina-protecao").classList.add("active");
+        document.getElementById("tabProtecao").classList.add("active");
     } else {
         document.getElementById("pagina-analisar").classList.add("active");
         document.getElementById("tabAnalisar").classList.add("active");
+    }
+}
+
+let protecaoAtiva = false;
+let intervaloProtecao = null;
+let contadorProtecao = 0;
+
+function adicionarEventoProtecao(texto) {
+    const atividade = document.getElementById("atividadeProtecao");
+    if (!atividade) return;
+
+    const agora = new Date().toLocaleTimeString("pt-BR");
+    atividade.innerHTML =
+        "• [" + agora + "] " + texto + "<br>" + atividade.innerHTML;
+
+    const linhas = atividade.innerHTML.split("<br>");
+    atividade.innerHTML = linhas.slice(0, 6).join("<br>");
+}
+
+async function atualizarEstadoProtecao() {
+    if (!protecaoAtiva) return;
+
+    contadorProtecao++;
+
+    const agora = new Date();
+    const horario = agora.toLocaleTimeString("pt-BR");
+
+    document.getElementById("ultimaVerificacao").innerText =
+        "Última verificação do escudo: " + horario;
+
+    document.getElementById("monitorProtecao").innerText =
+        "🦊 Escudo ativo • ciclo " + contadorProtecao +
+        " • IAFOX monitorando o estado da proteção.";
+
+    adicionarEventoProtecao("Escudo executou uma verificação de atividade.");
+
+    try {
+        const resposta = await fetch("/protecao-status", {
+            method: "GET",
+            cache: "no-store"
+        });
+
+        if (resposta.ok) {
+            document.getElementById("statusEscudo").innerText =
+                "PROTEÇÃO OPERACIONAL";
+        } else {
+            document.getElementById("statusEscudo").innerText =
+                "CONEXÃO COM O ESCUDO INSTÁVEL";
+        }
+
+    } catch (erro) {
+        document.getElementById("statusEscudo").innerText =
+            "MODO LOCAL — SERVIDOR NÃO RESPONDEU";
+    }
+}
+
+function alternarProtecao() {
+
+    protecaoAtiva = !protecaoAtiva;
+
+    const status = document.getElementById("statusProtecao");
+    const painel = document.getElementById("painelProtecao");
+    const botao = document.getElementById("btnProtecao");
+    const icone = document.getElementById("escudoIcone");
+
+    if (protecaoAtiva) {
+
+        status.innerText = "🟢 PROTEÇÃO ATIVA";
+        status.style.color = "#8cff8c";
+
+        icone.innerText = "🛡️";
+
+        painel.style.display = "block";
+
+        botao.innerText = "🔴 DESATIVAR MINHA PROTEÇÃO";
+
+        document.getElementById("substatusProtecao").innerText =
+            "O escudo está ativo e executando verificações contínuas.";
+
+        document.getElementById("statusNavegacao").innerText =
+            "MONITORAMENTO PREPARADO";
+
+        document.getElementById("statusAmeacas").innerText =
+            "DETECÇÃO PRONTA";
+
+        document.getElementById("statusAlertas").innerText =
+            "NENHUM ALERTA";
+
+        adicionarEventoProtecao("Minha Proteção foi ativada.");
+
+        atualizarEstadoProtecao();
+
+        if (intervaloProtecao) {
+            clearInterval(intervaloProtecao);
+        }
+
+        intervaloProtecao = setInterval(
+            atualizarEstadoProtecao,
+            5000
+        );
+
+    } else {
+
+        status.innerText = "DESLIGADO";
+        status.style.color = "";
+
+        painel.style.display = "none";
+
+        botao.innerText = "🛡️ ATIVAR MINHA PROTEÇÃO";
+
+        document.getElementById("substatusProtecao").innerText =
+            "O escudo está aguardando ativação.";
+
+        if (intervaloProtecao) {
+            clearInterval(intervaloProtecao);
+            intervaloProtecao = null;
+        }
+
+        adicionarEventoProtecao("Minha Proteção foi desativada.");
     }
 }
 
@@ -1904,4 +2206,3 @@ if __name__ == "__main__":
         port=5000,
         debug=True
     )
-
